@@ -6,32 +6,32 @@ from threading import Thread
 import json
 import os
 
-# =========================
-# Flask（Renderスリープ対策）
-# =========================
+# ==========================================
+# Render Keep Alive
+# ==========================================
 
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Bot is running!"
+    return "Bot is alive!"
 
 def run_web():
-    app.run(host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
 def keep_alive():
-    t = Thread(target=run_web)
-    t.start()
+    Thread(target=run_web).start()
 
-# =========================
+# ==========================================
 # TOKEN
-# =========================
+# ==========================================
 
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.getenv("DISCORD_TOKEN")
 
-# =========================
-# Discord Intents
-# =========================
+# ==========================================
+# Discord設定
+# ==========================================
 
 intents = discord.Intents.default()
 intents.guilds = True
@@ -42,15 +42,15 @@ bot = commands.Bot(
     intents=intents
 )
 
-# =========================
-# 保存ファイル
-# =========================
+# ==========================================
+# データファイル
+# ==========================================
 
 DATA_FILE = "settings.json"
 
-# =========================
+# ==========================================
 # データ読み込み
-# =========================
+# ==========================================
 
 def load_data():
 
@@ -58,15 +58,21 @@ def load_data():
         return {}
 
     with open(DATA_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
 
-# =========================
+        try:
+            return json.load(f)
+
+        except:
+            return {}
+
+# ==========================================
 # データ保存
-# =========================
+# ==========================================
 
 def save_data(data):
 
     with open(DATA_FILE, "w", encoding="utf-8") as f:
+
         json.dump(
             data,
             f,
@@ -74,9 +80,9 @@ def save_data(data):
             indent=4
         )
 
-# =========================
+# ==========================================
 # コード入力モーダル
-# =========================
+# ==========================================
 
 class CodeModal(discord.ui.Modal, title="認証コード入力"):
 
@@ -96,7 +102,8 @@ class CodeModal(discord.ui.Modal, title="認証コード入力"):
 
         guild_id = str(interaction.guild.id)
 
-        # サーバーデータなし
+        # サーバーデータ確認
+
         if guild_id not in data:
 
             await interaction.response.send_message(
@@ -105,10 +112,16 @@ class CodeModal(discord.ui.Modal, title="認証コード入力"):
             )
             return
 
+        codes = data[guild_id].get(
+            "codes",
+            {}
+        )
+
         input_code = str(self.code.value)
 
-        # コード確認
-        if input_code not in data[guild_id]["codes"]:
+        # コード存在確認
+
+        if input_code not in codes:
 
             await interaction.response.send_message(
                 "コードが違います。",
@@ -116,11 +129,14 @@ class CodeModal(discord.ui.Modal, title="認証コード入力"):
             )
             return
 
-        role_id = data[guild_id]["codes"][input_code]
+        role_id = codes[input_code]
 
-        role = interaction.guild.get_role(role_id)
+        role = interaction.guild.get_role(
+            int(role_id)
+        )
 
-        # ロール存在確認
+        # ロール確認
+
         if role is None:
 
             await interaction.response.send_message(
@@ -132,6 +148,7 @@ class CodeModal(discord.ui.Modal, title="認証コード入力"):
         member = interaction.user
 
         # 既に所持
+
         if role in member.roles:
 
             await interaction.response.send_message(
@@ -139,6 +156,8 @@ class CodeModal(discord.ui.Modal, title="認証コード入力"):
                 ephemeral=True
             )
             return
+
+        # ロール付与
 
         try:
 
@@ -156,9 +175,16 @@ class CodeModal(discord.ui.Modal, title="認証コード入力"):
                 ephemeral=True
             )
 
-# =========================
-# ボタン
-# =========================
+        except Exception as e:
+
+            await interaction.response.send_message(
+                f"エラー: {e}",
+                ephemeral=True
+            )
+
+# ==========================================
+# ボタンView
+# ==========================================
 
 class VerifyView(discord.ui.View):
 
@@ -181,22 +207,24 @@ class VerifyView(discord.ui.View):
             CodeModal()
         )
 
-# =========================
+# ==========================================
 # 起動時
-# =========================
+# ==========================================
 
 @bot.event
 async def on_ready():
 
-    print("--------------------------------")
-    print(f"ログインしました: {bot.user}")
-    print("--------------------------------")
+    print("--------------------")
+    print(f"ログイン: {bot.user}")
+    print("--------------------")
 
     try:
 
         synced = await bot.tree.sync()
 
-        print(f"同期コマンド数: {len(synced)}")
+        print(
+            f"同期コマンド数: {len(synced)}"
+        )
 
     except Exception as e:
 
@@ -204,9 +232,9 @@ async def on_ready():
 
     bot.add_view(VerifyView())
 
-# =========================
+# ==========================================
 # /パネル
-# =========================
+# ==========================================
 
 @bot.tree.command(
     name="パネル",
@@ -243,9 +271,9 @@ async def panel(
         ephemeral=True
     )
 
-# =========================
+# ==========================================
 # /コード設定
-# =========================
+# ==========================================
 
 @bot.tree.command(
     name="コード設定",
@@ -271,29 +299,31 @@ async def set_code(
     guild_id = str(interaction.guild.id)
 
     # サーバーデータ作成
+
     if guild_id not in data:
 
         data[guild_id] = {
             "codes": {}
         }
 
-    # 保存
+    # コード保存
+
     data[guild_id]["codes"][code] = role.id
 
     save_data(data)
 
     await interaction.response.send_message(
-        f"コード `{code}` → {role.mention} を設定しました。",
+        f"✅ コード `{code}` → {role.mention} を設定しました。",
         ephemeral=True
     )
 
-# =========================
+# ==========================================
 # /コード削除
-# =========================
+# ==========================================
 
 @bot.tree.command(
     name="コード削除",
-    description="コードを削除"
+    description="コード設定を削除"
 )
 @app_commands.default_permissions(
     administrator=True
@@ -320,7 +350,12 @@ async def delete_code(
         )
         return
 
-    if code not in data[guild_id]["codes"]:
+    codes = data[guild_id].get(
+        "codes",
+        {}
+    )
+
+    if code not in codes:
 
         await interaction.response.send_message(
             "そのコードは存在しません。",
@@ -328,18 +363,18 @@ async def delete_code(
         )
         return
 
-    del data[guild_id]["codes"][code]
+    del codes[code]
 
     save_data(data)
 
     await interaction.response.send_message(
-        f"`{code}` を削除しました。",
+        f"🗑️ `{code}` を削除しました。",
         ephemeral=True
     )
 
-# =========================
+# ==========================================
 # /コード一覧
-# =========================
+# ==========================================
 
 @bot.tree.command(
     name="コード一覧",
@@ -360,12 +395,15 @@ async def list_codes(
     if guild_id not in data:
 
         await interaction.response.send_message(
-            "設定がありません。",
+            "コード設定がありません。",
             ephemeral=True
         )
         return
 
-    codes = data[guild_id]["codes"]
+    codes = data[guild_id].get(
+        "codes",
+        {}
+    )
 
     if not codes:
 
@@ -379,7 +417,9 @@ async def list_codes(
 
     for code, role_id in codes.items():
 
-        role = interaction.guild.get_role(role_id)
+        role = interaction.guild.get_role(
+            int(role_id)
+        )
 
         if role:
 
@@ -398,10 +438,12 @@ async def list_codes(
         ephemeral=True
     )
 
-# =========================
+# ==========================================
 # 起動
-# =========================
+# ==========================================
 
-keep_alive()
+if __name__ == "__main__":
 
-bot.run(TOKEN)
+    keep_alive()
+
+    bot.run(TOKEN)
