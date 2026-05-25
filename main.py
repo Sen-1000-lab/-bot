@@ -7,21 +7,20 @@ import json
 import os
 
 # ==========================================
-# Render Keep Alive
+# Render / Replit Keep Alive
 # ==========================================
 
-app = Flask(__name__)
+app = Flask('')
 
-@app.route("/")
+@app.route('/')
 def home():
     return "Bot is alive!"
 
-def run_web():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+def run():
+    app.run(host='0.0.0.0', port=8080)
 
 def keep_alive():
-    Thread(target=run_web).start()
+    Thread(target=run).start()
 
 # ==========================================
 # TOKEN
@@ -34,8 +33,8 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 # ==========================================
 
 intents = discord.Intents.default()
-intents.guilds = True
 intents.members = True
+intents.guilds = True
 
 bot = commands.Bot(
     command_prefix="!",
@@ -43,7 +42,7 @@ bot = commands.Bot(
 )
 
 # ==========================================
-# データファイル
+# データ保存ファイル
 # ==========================================
 
 DATA_FILE = "settings.json"
@@ -84,7 +83,7 @@ def save_data(data):
 # コード入力モーダル
 # ==========================================
 
-class CodeModal(discord.ui.Modal, title="認証コード入力"):
+class VerifyModal(discord.ui.Modal, title="認証コード入力"):
 
     code = discord.ui.TextInput(
         label="コードを入力してください",
@@ -119,12 +118,12 @@ class CodeModal(discord.ui.Modal, title="認証コード入力"):
 
         input_code = str(self.code.value)
 
-        # コード存在確認
+        # コード確認
 
         if input_code not in codes:
 
             await interaction.response.send_message(
-                "コードが違います。",
+                "❌ コードが違います。",
                 ephemeral=True
             )
             return
@@ -135,7 +134,7 @@ class CodeModal(discord.ui.Modal, title="認証コード入力"):
             int(role_id)
         )
 
-        # ロール確認
+        # ロール存在確認
 
         if role is None:
 
@@ -147,7 +146,7 @@ class CodeModal(discord.ui.Modal, title="認証コード入力"):
 
         member = interaction.user
 
-        # 既に所持
+        # 既に持ってる
 
         if role in member.roles:
 
@@ -164,7 +163,7 @@ class CodeModal(discord.ui.Modal, title="認証コード入力"):
             await member.add_roles(role)
 
             await interaction.response.send_message(
-                f"{role.mention} を付与しました！",
+                f"✅ {role.mention} を付与しました！",
                 ephemeral=True
             )
 
@@ -204,7 +203,7 @@ class VerifyView(discord.ui.View):
     ):
 
         await interaction.response.send_modal(
-            CodeModal()
+            VerifyModal()
         )
 
 # ==========================================
@@ -215,7 +214,7 @@ class VerifyView(discord.ui.View):
 async def on_ready():
 
     print("--------------------")
-    print(f"ログイン: {bot.user}")
+    print(f"ログインしました: {bot.user}")
     print("--------------------")
 
     try:
@@ -258,7 +257,7 @@ async def panel(
     )
 
     embed.set_footer(
-        text="コード認証システム"
+        text="認証システム"
     )
 
     await interaction.channel.send(
@@ -267,7 +266,7 @@ async def panel(
     )
 
     await interaction.response.send_message(
-        "認証パネルを送信しました。",
+        "✅ 認証パネルを送信しました。",
         ephemeral=True
     )
 
@@ -277,7 +276,7 @@ async def panel(
 
 @bot.tree.command(
     name="コード設定",
-    description="コードとロールを設定"
+    description="認証コードを設定"
 )
 @app_commands.default_permissions(
     administrator=True
@@ -298,22 +297,18 @@ async def set_code(
 
     guild_id = str(interaction.guild.id)
 
-    # サーバーデータ作成
-
     if guild_id not in data:
 
         data[guild_id] = {
             "codes": {}
         }
 
-    # コード保存
-
     data[guild_id]["codes"][code] = role.id
 
     save_data(data)
 
     await interaction.response.send_message(
-        f"✅ コード `{code}` → {role.mention} を設定しました。",
+        f"✅ `{code}` → {role.mention} を設定しました。",
         ephemeral=True
     )
 
@@ -323,7 +318,7 @@ async def set_code(
 
 @bot.tree.command(
     name="コード削除",
-    description="コード設定を削除"
+    description="認証コードを削除"
 )
 @app_commands.default_permissions(
     administrator=True
@@ -384,7 +379,7 @@ async def delete_code(
     administrator=True
 )
 
-async def list_codes(
+async def code_list(
     interaction: discord.Interaction
 ):
 
