@@ -1,8 +1,27 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
+from flask import Flask
+from threading import Thread
 import json
 import os
+
+# =========================
+# Flask（Renderスリープ対策）
+# =========================
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is running!"
+
+def run_web():
+    app.run(host="0.0.0.0", port=10000)
+
+def keep_alive():
+    t = Thread(target=run_web)
+    t.start()
 
 # =========================
 # TOKEN
@@ -11,7 +30,7 @@ import os
 TOKEN = os.getenv("TOKEN")
 
 # =========================
-# Intents
+# Discord Intents
 # =========================
 
 intents = discord.Intents.default()
@@ -34,6 +53,7 @@ DATA_FILE = "settings.json"
 # =========================
 
 def load_data():
+
     if not os.path.exists(DATA_FILE):
         return {}
 
@@ -45,8 +65,14 @@ def load_data():
 # =========================
 
 def save_data(data):
+
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+        json.dump(
+            data,
+            f,
+            ensure_ascii=False,
+            indent=4
+        )
 
 # =========================
 # コード入力モーダル
@@ -55,29 +81,33 @@ def save_data(data):
 class CodeModal(discord.ui.Modal, title="認証コード入力"):
 
     code = discord.ui.TextInput(
-        label="コードを入力",
+        label="コードを入力してください",
         placeholder="例: ABC123",
         required=True,
         max_length=100
     )
 
-    async def on_submit(self, interaction: discord.Interaction):
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
 
         data = load_data()
+
         guild_id = str(interaction.guild.id)
 
         # サーバーデータなし
         if guild_id not in data:
 
             await interaction.response.send_message(
-                "まだコード設定がありません。",
+                "コード設定がありません。",
                 ephemeral=True
             )
             return
 
         input_code = str(self.code.value)
 
-        # コード存在確認
+        # コード確認
         if input_code not in data[guild_id]["codes"]:
 
             await interaction.response.send_message(
@@ -90,6 +120,7 @@ class CodeModal(discord.ui.Modal, title="認証コード入力"):
 
         role = interaction.guild.get_role(role_id)
 
+        # ロール存在確認
         if role is None:
 
             await interaction.response.send_message(
@@ -100,7 +131,7 @@ class CodeModal(discord.ui.Modal, title="認証コード入力"):
 
         member = interaction.user
 
-        # 既に持ってる
+        # 既に所持
         if role in member.roles:
 
             await interaction.response.send_message(
@@ -126,7 +157,7 @@ class CodeModal(discord.ui.Modal, title="認証コード入力"):
             )
 
 # =========================
-# パネルView
+# ボタン
 # =========================
 
 class VerifyView(discord.ui.View):
@@ -146,7 +177,9 @@ class VerifyView(discord.ui.View):
         button: discord.ui.Button
     ):
 
-        await interaction.response.send_modal(CodeModal())
+        await interaction.response.send_modal(
+            CodeModal()
+        )
 
 # =========================
 # 起動時
@@ -156,7 +189,7 @@ class VerifyView(discord.ui.View):
 async def on_ready():
 
     print("--------------------------------")
-    print(f"ログイン: {bot.user}")
+    print(f"ログインしました: {bot.user}")
     print("--------------------------------")
 
     try:
@@ -179,9 +212,13 @@ async def on_ready():
     name="パネル",
     description="認証パネルを送信"
 )
-@app_commands.default_permissions(administrator=True)
+@app_commands.default_permissions(
+    administrator=True
+)
 
-async def panel(interaction: discord.Interaction):
+async def panel(
+    interaction: discord.Interaction
+):
 
     embed = discord.Embed(
         title="認証パネル",
@@ -214,7 +251,9 @@ async def panel(interaction: discord.Interaction):
     name="コード設定",
     description="コードとロールを設定"
 )
-@app_commands.default_permissions(administrator=True)
+@app_commands.default_permissions(
+    administrator=True
+)
 
 @app_commands.describe(
     code="認証コード",
@@ -238,7 +277,7 @@ async def set_code(
             "codes": {}
         }
 
-    # コード保存
+    # 保存
     data[guild_id]["codes"][code] = role.id
 
     save_data(data)
@@ -256,7 +295,9 @@ async def set_code(
     name="コード削除",
     description="コードを削除"
 )
-@app_commands.default_permissions(administrator=True)
+@app_commands.default_permissions(
+    administrator=True
+)
 
 @app_commands.describe(
     code="削除するコード"
@@ -304,9 +345,13 @@ async def delete_code(
     name="コード一覧",
     description="登録コード一覧"
 )
-@app_commands.default_permissions(administrator=True)
+@app_commands.default_permissions(
+    administrator=True
+)
 
-async def list_codes(interaction: discord.Interaction):
+async def list_codes(
+    interaction: discord.Interaction
+):
 
     data = load_data()
 
@@ -338,7 +383,9 @@ async def list_codes(interaction: discord.Interaction):
 
         if role:
 
-            description += f"`{code}` → {role.mention}\n"
+            description += (
+                f"`{code}` → {role.mention}\n"
+            )
 
     embed = discord.Embed(
         title="コード一覧",
@@ -352,7 +399,9 @@ async def list_codes(interaction: discord.Interaction):
     )
 
 # =========================
-# 実行
+# 起動
 # =========================
+
+keep_alive()
 
 bot.run(TOKEN)
