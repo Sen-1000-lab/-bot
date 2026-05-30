@@ -1,40 +1,66 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 from flask import Flask
 from threading import Thread
+import aiohttp
 import json
 import os
 
 # ==========================================
-# Render / Replit Keep Alive
+# Flask / Render
 # ==========================================
 
-app = Flask('')
+app = Flask(__name__)
 
-@app.route('/')
+@app.route("/")
 def home():
-    return "Bot is alive!"
+    return "Bot is Alive"
 
-def run():
-    app.run(host='0.0.0.0', port=8080)
+def run_web():
+
+    port = int(
+        os.environ.get(
+            "PORT",
+            10000
+        )
+    )
+
+    app.run(
+        host="0.0.0.0",
+        port=port,
+        use_reloader=False
+    )
 
 def keep_alive():
-    Thread(target=run).start()
+
+    Thread(
+        target=run_web,
+        daemon=True
+    ).start()
 
 # ==========================================
-# TOKEN
+# Token
 # ==========================================
 
-TOKEN = os.getenv("DISCORD_TOKEN")
+TOKEN = os.getenv(
+    "DISCORD_TOKEN"
+)
+
+if not TOKEN:
+
+    raise ValueError(
+        "DISCORD_TOKEN が設定されていません"
+    )
 
 # ==========================================
-# Discord設定
+# Discord
 # ==========================================
 
 intents = discord.Intents.default()
-intents.members = True
+
 intents.guilds = True
+intents.members = True
 
 bot = commands.Bot(
     command_prefix="!",
@@ -42,35 +68,51 @@ bot = commands.Bot(
 )
 
 # ==========================================
-# データ保存ファイル
+# Data
 # ==========================================
 
 DATA_FILE = "settings.json"
 
-# ==========================================
-# データ読み込み
-# ==========================================
-
 def load_data():
 
-    if not os.path.exists(DATA_FILE):
-        return {}
+    if not os.path.exists(
+        DATA_FILE
+    ):
 
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        with open(
+            DATA_FILE,
+            "w",
+            encoding="utf-8"
+        ) as f:
 
-        try:
+            json.dump(
+                {},
+                f,
+                ensure_ascii=False,
+                indent=4
+            )
+
+    try:
+
+        with open(
+            DATA_FILE,
+            "r",
+            encoding="utf-8"
+        ) as f:
+
             return json.load(f)
 
-        except:
-            return {}
+    except:
 
-# ==========================================
-# データ保存
-# ==========================================
+        return {}
 
 def save_data(data):
 
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
+    with open(
+        DATA_FILE,
+        "w",
+        encoding="utf-8"
+    ) as f:
 
         json.dump(
             data,
@@ -80,365 +122,122 @@ def save_data(data):
         )
 
 # ==========================================
-# コード入力モーダル
+# Guild Data
 # ==========================================
 
-class VerifyModal(discord.ui.Modal, title="認証コード入力"):
-
-    code = discord.ui.TextInput(
-        label="コードを入力してください",
-        placeholder="例: ABC123",
-        required=True,
-        max_length=100
-    )
-
-    async def on_submit(
-        self,
-        interaction: discord.Interaction
-    ):
-
-        data = load_data()
-
-        guild_id = str(interaction.guild.id)
-
-        # サーバーデータ確認
-
-        if guild_id not in data:
-
-            await interaction.response.send_message(
-                "コード設定がありません。",
-                ephemeral=True
-            )
-            return
-
-        codes = data[guild_id].get(
-            "codes",
-            {}
-        )
-
-        input_code = str(self.code.value)
-
-        # コード確認
-
-        if input_code not in codes:
-
-            await interaction.response.send_message(
-                "❌ コードが違います。",
-                ephemeral=True
-            )
-            return
-
-        role_id = codes[input_code]
-
-        role = interaction.guild.get_role(
-            int(role_id)
-        )
-
-        # ロール存在確認
-
-        if role is None:
-
-            await interaction.response.send_message(
-                "ロールが見つかりません。",
-                ephemeral=True
-            )
-            return
-
-        member = interaction.user
-
-        # 既に持ってる
-
-        if role in member.roles:
-
-            await interaction.response.send_message(
-                f"既に {role.mention} を持っています。",
-                ephemeral=True
-            )
-            return
-
-        # ロール付与
-
-        try:
-
-            await member.add_roles(role)
-
-            await interaction.response.send_message(
-                f"✅ {role.mention} を付与しました！",
-                ephemeral=True
-            )
-
-        except discord.Forbidden:
-
-            await interaction.response.send_message(
-                "BOTにロール管理権限がありません。",
-                ephemeral=True
-            )
-
-        except Exception as e:
-
-            await interaction.response.send_message(
-                f"エラー: {e}",
-                ephemeral=True
-            )
-
-# ==========================================
-# ボタンView
-# ==========================================
-
-class VerifyView(discord.ui.View):
-
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(
-        label="認証する",
-        style=discord.ButtonStyle.green,
-        emoji="✅",
-        custom_id="verify_button"
-    )
-    async def verify_button(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-
-        await interaction.response.send_modal(
-            VerifyModal()
-        )
-
-# ==========================================
-# 起動時
-# ==========================================
-
-@bot.event
-async def on_ready():
-
-    print("--------------------")
-    print(f"ログインしました: {bot.user}")
-    print("--------------------")
-
-    try:
-
-        synced = await bot.tree.sync()
-
-        print(
-            f"同期コマンド数: {len(synced)}"
-        )
-
-    except Exception as e:
-
-        print(e)
-
-    bot.add_view(VerifyView())
-
-# ==========================================
-# /パネル
-# ==========================================
-
-@bot.tree.command(
-    name="パネル",
-    description="認証パネルを送信"
-)
-@app_commands.default_permissions(
-    administrator=True
-)
-
-async def panel(
-    interaction: discord.Interaction
+def ensure_guild_data(
+    data,
+    guild_id
 ):
-
-    embed = discord.Embed(
-        title="認証パネル",
-        description=(
-            "下のボタンを押して\n"
-            "認証コードを入力してください。"
-        ),
-        color=discord.Color.blue()
-    )
-
-    embed.set_footer(
-        text="認証システム"
-    )
-
-    await interaction.channel.send(
-        embed=embed,
-        view=VerifyView()
-    )
-
-    await interaction.response.send_message(
-        "✅ 認証パネルを送信しました。",
-        ephemeral=True
-    )
-
-# ==========================================
-# /コード設定
-# ==========================================
-
-@bot.tree.command(
-    name="コード設定",
-    description="認証コードを設定"
-)
-@app_commands.default_permissions(
-    administrator=True
-)
-
-@app_commands.describe(
-    code="認証コード",
-    role="付与するロール"
-)
-
-async def set_code(
-    interaction: discord.Interaction,
-    code: str,
-    role: discord.Role
-):
-
-    data = load_data()
-
-    guild_id = str(interaction.guild.id)
 
     if guild_id not in data:
 
         data[guild_id] = {
-            "codes": {}
+
+            "codes": {},
+
+            "scores": {},
+
+            "log_channel": None
         }
 
-    data[guild_id]["codes"][code] = role.id
+    if "codes" not in data[guild_id]:
 
-    save_data(data)
+        data[guild_id]["codes"] = {}
 
-    await interaction.response.send_message(
-        f"✅ `{code}` → {role.mention} を設定しました。",
-        ephemeral=True
-    )
+    if "scores" not in data[guild_id]:
+
+        data[guild_id]["scores"] = {}
+
+    if "log_channel" not in data[guild_id]:
+
+        data[guild_id]["log_channel"] = None
 
 # ==========================================
-# /コード削除
+# Logs
 # ==========================================
 
-@bot.tree.command(
-    name="コード削除",
-    description="認証コードを削除"
-)
-@app_commands.default_permissions(
-    administrator=True
-)
-
-@app_commands.describe(
-    code="削除するコード"
-)
-
-async def delete_code(
-    interaction: discord.Interaction,
-    code: str
+async def send_log(
+    guild,
+    message
 ):
 
     data = load_data()
 
-    guild_id = str(interaction.guild.id)
+    guild_id = str(
+        guild.id
+    )
 
     if guild_id not in data:
-
-        await interaction.response.send_message(
-            "設定がありません。",
-            ephemeral=True
-        )
         return
 
-    codes = data[guild_id].get(
-        "codes",
-        {}
+    channel_id = data[guild_id].get(
+        "log_channel"
     )
 
-    if code not in codes:
-
-        await interaction.response.send_message(
-            "そのコードは存在しません。",
-            ephemeral=True
-        )
+    if not channel_id:
         return
 
-    del codes[code]
-
-    save_data(data)
-
-    await interaction.response.send_message(
-        f"🗑️ `{code}` を削除しました。",
-        ephemeral=True
+    channel = guild.get_channel(
+        int(channel_id)
     )
 
-# ==========================================
-# /コード一覧
-# ==========================================
+    if channel:
 
-@bot.tree.command(
-    name="コード一覧",
-    description="登録コード一覧"
-)
-@app_commands.default_permissions(
-    administrator=True
-)
+        try:
 
-async def code_list(
-    interaction: discord.Interaction
-):
-
-    data = load_data()
-
-    guild_id = str(interaction.guild.id)
-
-    if guild_id not in data:
-
-        await interaction.response.send_message(
-            "コード設定がありません。",
-            ephemeral=True
-        )
-        return
-
-    codes = data[guild_id].get(
-        "codes",
-        {}
-    )
-
-    if not codes:
-
-        await interaction.response.send_message(
-            "コードが登録されていません。",
-            ephemeral=True
-        )
-        return
-
-    description = ""
-
-    for code, role_id in codes.items():
-
-        role = interaction.guild.get_role(
-            int(role_id)
-        )
-
-        if role:
-
-            description += (
-                f"`{code}` → {role.mention}\n"
+            await channel.send(
+                message
             )
 
-    embed = discord.Embed(
-        title="コード一覧",
-        description=description,
-        color=discord.Color.green()
-    )
-
-    await interaction.response.send_message(
-        embed=embed,
-        ephemeral=True
-    )
+        except:
+            pass
 
 # ==========================================
-# 起動
+# Render Self Ping
 # ==========================================
 
-if __name__ == "__main__":
+@tasks.loop(minutes=5)
+async def render_ping():
 
-    keep_alive()
+    try:
 
-    bot.run(TOKEN)
+        url = os.getenv(
+            "RENDER_EXTERNAL_URL"
+        )
+
+        if not url:
+            return
+
+        async with aiohttp.ClientSession() as session:
+
+            async with session.get(
+                url,
+                timeout=30
+            ) as response:
+
+                print(
+                    f"[KEEPALIVE] {response.status}"
+                )
+
+    except Exception as e:
+
+        print(
+            f"[KEEPALIVE ERROR] {e}"
+        )
+
+# ==========================================
+# Verify Modal
+# ==========================================
+
+class VerifyModal(
+    discord.ui.Modal,
+    title="認証コード入力"
+):
+
+    code = discord.ui.TextInput(
+        label="コード",
+        placeholder="コードを入力",
+        required=True,
+        max_length=100
+    )
