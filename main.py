@@ -252,7 +252,7 @@ async def scoreboard(interaction: discord.Interaction):
 
     scores = data[gid]["scores"]
     
-    # 【修正箇所】x[1] (ポイント数) で正しく並び替えるように修正
+    # 【完全修正】x[1] (ポイント数) を明確に対象にして降順ソート
     ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
     text = ""
