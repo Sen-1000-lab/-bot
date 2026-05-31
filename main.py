@@ -2,10 +2,34 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 
+from flask import Flask
+from threading import Thread
+
 import aiohttp
 import json
 import os
-import random
+
+# ==================================================
+# Flask KeepAlive
+# ==================================================
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is Alive"
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+
+    app.run(
+        host="0.0.0.0",
+        port=port,
+        use_reloader=False
+    )
+
+def keep_alive():
+    Thread(target=run_web, daemon=True).start()
 
 # ==================================================
 # TOKEN
@@ -16,6 +40,8 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
     raise ValueError("DISCORD_TOKEN が設定されていません")
 
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
+
 # ==================================================
 # BOT
 # ==================================================
@@ -23,33 +49,15 @@ if not TOKEN:
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
-intents.message_content = True
 
-class MyBot(commands.Bot):
-
-    def __init__(self):
-        super().__init__(
-            command_prefix="!",
-            intents=intents
-        )
-        self.session = None
-
-    async def setup_hook(self):
-        self.session = aiohttp.ClientSession()
-        self.render_ping.start()
-
-    async def close(self):
-        if self.session:
-            await self.session.close()
-        await super().close()
-
-bot = MyBot()
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ==================================================
 # DATA
 # ==================================================
 
 DATA_FILE = "data.json"
+
 
 def load_data():
     if not os.path.exists(DATA_FILE):
@@ -61,15 +69,14 @@ def load_data():
     except:
         return {}
 
+
 def save_data(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# ==================================================
-# Guild init
-# ==================================================
 
-def ensure_guild(data, gid):
+def ensure_guild(data, guild_id):
+    gid = str(guild_id)
 
     if gid not in data:
         data[gid] = {
@@ -82,212 +89,141 @@ def ensure_guild(data, gid):
     data[gid].setdefault("scores", {})
     data[gid].setdefault("log_channel", None)
 
+
 # ==================================================
 # LOG
 # ==================================================
 
-async def send_log(guild, msg):
-
+async def send_log(guild, text):
     data = load_data()
     gid = str(guild.id)
 
     if gid not in data:
         return
 
-    cid = data[gid].get("log_channel")
-    if not cid:
+    channel_id = data[gid].get("log_channel")
+    if not channel_id:
         return
 
-    channel = guild.get_channel(int(cid))
+    channel = guild.get_channel(int(channel_id))
     if channel:
         try:
-            await channel.send(msg)
+            await channel.send(text)
         except:
             pass
 
+
 # ==================================================
-# KEEP ALIVE (Render ping only)
+# KEEP ALIVE (Render)
 # ==================================================
 
 @tasks.loop(minutes=5)
 async def render_ping():
-
-    url = os.getenv("RENDER_EXTERNAL_URL")
-    if not url:
+    if not RENDER_URL:
         return
 
     try:
-        async with bot.session.get(url, timeout=20) as r:
-            print("[KEEPALIVE]", r.status)
-    except Exception as e:
-        print("[KEEPALIVE ERROR]", e)
+        async with aiohttp.ClientSession() as session:
+            async with session.get(RENDER_URL, timeout=20):
+                pass
+    except:
+        pass
+
 
 # ==================================================
-# MODAL (FIXED)
+# VERIFY MODAL（修正版）
 # ==================================================
 
 class VerifyModal(discord.ui.Modal, title="認証コード入力"):
 
-    code = discord.ui.TextInput(
-        label="コード",
-        required=True,
-        max_length=100
-    )
+    code = discord.ui.TextInput(label="コード", required=True)
 
     async def on_submit(self, interaction: discord.Interaction):
 
         data = load_data()
         gid = str(interaction.guild.id)
-
         ensure_guild(data, gid)
 
         codes = data[gid]["codes"]
-        input_code = str(self.code.value)
 
-        if input_code not in codes:
-            return await interaction.response.send_message(
-                "❌ コードが違います",
-                ephemeral=True
-            )
+        if self.code.value not in codes:
+            await interaction.response.send_message("❌ コード違い", ephemeral=True)
+            return
 
-        role = interaction.guild.get_role(int(codes[input_code]))
+        role = interaction.guild.get_role(int(codes[self.code.value]))
+
         if not role:
-            return await interaction.response.send_message(
-                "❌ ロールなし",
-                ephemeral=True
-            )
+            await interaction.response.send_message("❌ ロールなし", ephemeral=True)
+            return
 
         if role in interaction.user.roles:
-            return await interaction.response.send_message(
-                "すでに認証済み",
-                ephemeral=True
-            )
+            await interaction.response.send_message("既に認証済み", ephemeral=True)
+            return
 
-        await interaction.user.add_roles(role)
+        try:
+            await interaction.user.add_roles(role)
+            await interaction.response.send_message("✅ 認証完了", ephemeral=True)
 
-        await interaction.response.send_message(
-            f"✅ {role.mention} 付与完了",
-            ephemeral=True
-        )
+            await send_log(interaction.guild, f"認証: {interaction.user} → {role.name}")
 
-        await send_log(interaction.guild, f"認証: {interaction.user} → {role.name}")
+        except discord.Forbidden:
+            await interaction.response.send_message("権限なし", ephemeral=True)
+
 
 # ==================================================
 # VIEW
 # ==================================================
 
 class VerifyView(discord.ui.View):
-
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(
-        label="認証する",
-        style=discord.ButtonStyle.green,
-        emoji="✅"
-    )
+    @discord.ui.button(label="認証", style=discord.ButtonStyle.green)
     async def btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-
         await interaction.response.send_modal(VerifyModal())
 
-# ==================================================
-# PANEL
-# ==================================================
-
-@bot.tree.command(name="パネル")
-@app_commands.checks.has_permissions(administrator=True)
-async def panel(interaction: discord.Interaction):
-
-    embed = discord.Embed(
-        title="認証パネル",
-        description="ボタンで認証",
-        color=0x3498db
-    )
-
-    await interaction.channel.send(embed=embed, view=VerifyView())
-    await interaction.response.send_message("送信OK", ephemeral=True)
 
 # ==================================================
-# CODE SET
+# ADMIN CHECK
 # ==================================================
 
-@bot.tree.command(name="コード設定")
-@app_commands.checks.has_permissions(administrator=True)
-async def set_code(interaction: discord.Interaction, code: str, role: discord.Role):
+def is_admin(interaction: discord.Interaction):
+    return interaction.user.guild_permissions.administrator
 
-    data = load_data()
-    gid = str(interaction.guild.id)
-
-    ensure_guild(data, gid)
-
-    data[gid]["codes"][code] = role.id
-    save_data(data)
-
-    await interaction.response.send_message(f"OK {code}", ephemeral=True)
 
 # ==================================================
-# DELETE CODE
-# ==================================================
-
-@bot.tree.command(name="コード削除")
-@app_commands.checks.has_permissions(administrator=True)
-async def del_code(interaction: discord.Interaction, code: str):
-
-    data = load_data()
-    gid = str(interaction.guild.id)
-
-    ensure_guild(data, gid)
-
-    if code in data[gid]["codes"]:
-        del data[gid]["codes"][code]
-        save_data(data)
-
-        await interaction.response.send_message("削除OK", ephemeral=True)
-    else:
-        await interaction.response.send_message("なし", ephemeral=True)
-
-# ==================================================
-# SCORES
+# SCORE COMMANDS
 # ==================================================
 
 @bot.tree.command(name="ポイント追加")
-@app_commands.checks.has_permissions(administrator=True)
-async def add_point(interaction, member: discord.Member, point: int):
+@app_commands.check(is_admin)
+async def add_point(interaction: discord.Interaction, member: discord.Member, point: int):
 
     data = load_data()
     gid = str(interaction.guild.id)
-
     ensure_guild(data, gid)
 
-    uid = str(member.id)
+    scores = data[gid]["scores"]
 
-    data[gid]["scores"][uid] = data[gid]["scores"].get(uid, 0) + point
+    uid = str(member.id)
+    scores[uid] = scores.get(uid, 0) + point
 
     save_data(data)
 
-    await interaction.response.send_message("追加OK", ephemeral=True)
+    await interaction.response.send_message(f"{member.mention}+{point}pt", ephemeral=True)
 
-# --------------------------------------------------
 
-@bot.tree.command(name="ポイント減算")
-@app_commands.checks.has_permissions(administrator=True)
-async def remove_point(interaction, member: discord.Member, point: int):
+@bot.tree.command(name="ポイント確認")
+async def my_point(interaction: discord.Interaction):
 
     data = load_data()
     gid = str(interaction.guild.id)
-
     ensure_guild(data, gid)
 
-    uid = str(member.id)
+    score = data[gid]["scores"].get(str(interaction.user.id), 0)
 
-    data[gid]["scores"][uid] = max(
-        0,
-        data[gid]["scores"].get(uid, 0) - point
-    )
+    await interaction.response.send_message(f"あなた: {score}pt", ephemeral=True)
 
-    save_data(data)
-
-    await interaction.response.send_message("減算OK", ephemeral=True)
 
 # ==================================================
 # SCOREBOARD
@@ -298,44 +234,63 @@ async def scoreboard(interaction: discord.Interaction):
 
     data = load_data()
     gid = str(interaction.guild.id)
-
     ensure_guild(data, gid)
 
     scores = data[gid]["scores"]
 
-    sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
     text = ""
-
     rank = 1
 
-    for uid, score in sorted_scores:
-
-        if score <= 0:
+    for uid, pt in ranking:
+        if pt <= 0:
             continue
 
         member = interaction.guild.get_member(int(uid))
-        if not member:
+        if not member or member.bot:
             continue
 
-        text += f"{rank}位 {member.display_name} - {score}pt\n"
+        text += f"{rank}位 {member.mention} - {pt}pt\n"
         rank += 1
 
-    await interaction.response.send_message(
-        text or "データなし"
-    )
+    if not text:
+        text = "データなし"
+
+    embed = discord.Embed(title="スコアボード", description=text)
+    await interaction.response.send_message(embed=embed)
+
 
 # ==================================================
-# RESET ALL (FIXED)
+# ALL ADD / RESET
 # ==================================================
+
+@bot.tree.command(name="全員ポイント追加")
+@app_commands.check(is_admin)
+async def add_all(interaction: discord.Interaction, point: int):
+
+    data = load_data()
+    gid = str(interaction.guild.id)
+    ensure_guild(data, gid)
+
+    for m in interaction.guild.members:
+        if m.bot:
+            continue
+
+        uid = str(m.id)
+        data[gid]["scores"][uid] = data[gid]["scores"].get(uid, 0) + point
+
+    save_data(data)
+
+    await interaction.response.send_message("全員追加完了", ephemeral=True)
+
 
 @bot.tree.command(name="全員リセット")
-@app_commands.checks.has_permissions(administrator=True)
+@app_commands.check(is_admin)
 async def reset_all(interaction: discord.Interaction):
 
     data = load_data()
     gid = str(interaction.guild.id)
-
     ensure_guild(data, gid)
 
     data[gid]["scores"] = {}
@@ -344,24 +299,58 @@ async def reset_all(interaction: discord.Interaction):
 
     await interaction.response.send_message("リセット完了", ephemeral=True)
 
+
+# ==================================================
+# PANEL
+# ==================================================
+
+@bot.tree.command(name="パネル")
+@app_commands.check(is_admin)
+async def panel(interaction: discord.Interaction):
+
+    embed = discord.Embed(title="認証パネル")
+    await interaction.channel.send(embed=embed, view=VerifyView())
+
+    await interaction.response.send_message("送信完了", ephemeral=True)
+
+
+# ==================================================
+# CODE SET
+# ==================================================
+
+@bot.tree.command(name="コード設定")
+@app_commands.check(is_admin)
+async def set_code(interaction: discord.Interaction, code: str, role: discord.Role):
+
+    data = load_data()
+    gid = str(interaction.guild.id)
+    ensure_guild(data, gid)
+
+    data[gid]["codes"][code] = role.id
+
+    save_data(data)
+
+    await interaction.response.send_message("設定完了", ephemeral=True)
+
+
 # ==================================================
 # LOG CHANNEL
 # ==================================================
 
-@bot.tree.command(name="ログチャンネル")
-@app_commands.checks.has_permissions(administrator=True)
+@bot.tree.command(name="ログ設定")
+@app_commands.check(is_admin)
 async def set_log(interaction: discord.Interaction, channel: discord.TextChannel):
 
     data = load_data()
     gid = str(interaction.guild.id)
-
     ensure_guild(data, gid)
 
-    data[gid]["log_channel"] = str(channel.id)
+    data[gid]["log_channel"] = channel.id
 
     save_data(data)
 
-    await interaction.response.send_message("ログ設定OK", ephemeral=True)
+    await interaction.response.send_message("ログ設定完了", ephemeral=True)
+
 
 # ==================================================
 # READY
@@ -370,15 +359,19 @@ async def set_log(interaction: discord.Interaction, channel: discord.TextChannel
 @bot.event
 async def on_ready():
 
-    await bot.tree.sync()
-
     if not render_ping.is_running():
         render_ping.start()
 
-    print(f"OK {bot.user}")
+    await bot.tree.sync()
+
+    print(f"起動: {bot.user}")
+
 
 # ==================================================
 # START
 # ==================================================
 
-bot.run(TOKEN)
+if __name__ == "__main__":
+
+    keep_alive()
+    bot.run(TOKEN)
