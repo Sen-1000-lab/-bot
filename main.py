@@ -205,7 +205,6 @@ async def check_my_roles(interaction: discord.Interaction):
 
     verified_roles = []
 
-    # サーバーに設定されているコードと、ユーザーの所持ロールを比較
     for code, role_id in codes.items():
         role = interaction.guild.get_role(int(role_id))
         if role and role in user_roles:
@@ -252,6 +251,8 @@ async def scoreboard(interaction: discord.Interaction):
     ensure_guild(data, gid)
 
     scores = data[gid]["scores"]
+    
+    # 【修正箇所】x[1] (ポイント数) で正しく並び替えるように修正
     ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
     text = ""
