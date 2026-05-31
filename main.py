@@ -8,9 +8,21 @@ from threading import Thread
 import aiohttp
 import json
 import os
+import sys
 
 # ==================================================
-# Flask KeepAlive (Render 200番応答用)
+# Python 3.13 / 3.14 音声バグ強制回避対策 (追加)
+# ==================================================
+try:
+    import audioop
+except ModuleNotFoundError:
+    import types
+    # ダミーのaudioopモジュールを作ってシステムに登録し、エラーを騙す
+    dummy_audioop = types.ModuleType("audioop")
+    sys.modules["audioop"] = dummy_audioop
+
+# ==================================================
+# Flask KeepAlive
 # ==================================================
 
 app = Flask(__name__)
@@ -20,8 +32,11 @@ def home():
     return "Bot is Alive"
 
 def run_web():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, use_reloader=False)
+    try:
+        port = int(os.environ.get("PORT", 10000))
+        app.run(host="0.0.0.0", port=port, use_reloader=False)
+    except Exception as e:
+        print(f"[Flask Error] Web server failed: {e}", file=sys.stderr)
 
 def keep_alive():
     Thread(target=run_web, daemon=True).start()
@@ -32,7 +47,8 @@ def keep_alive():
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
-    raise ValueError("DISCORD_TOKEN が設定されていません")
+    print("[Error] DISCORD_TOKEN is missing!", file=sys.stderr)
+    sys.exit(1)
 
 RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
 DATA_FILE = "data.json"
@@ -47,12 +63,16 @@ def load_data():
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    except:
+    except Exception as e:
+        print(f"[Data Error] Load failed: {e}", file=sys.stderr)
         return {}
 
 def save_data(data):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[Data Error] Save failed: {e}", file=sys.stderr)
 
 def ensure_guild(data, guild_id):
     gid = str(guild_id)
@@ -116,7 +136,7 @@ class VerifyModal(discord.ui.Modal, title="認証コード入力"):
             await interaction.response.send_message("権限なし: Botのロール順位を上げて再試行してください", ephemeral=True)
 
 # ==================================================
-# VIEW (再起動・永続化対応)
+# VIEW
 # ==================================================
 
 class VerifyView(discord.ui.View):
@@ -140,14 +160,17 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
-    bot.add_view(VerifyView())
-    await bot.tree.sync()
-    if not render_ping.is_running():
-        render_ping.start()
-    print(f"Logged in as {bot.user}")
+    try:
+        bot.add_view(VerifyView())
+        await bot.tree.sync()
+        if not render_ping.is_running():
+            render_ping.start()
+        print(f"[Bot] Logged in successfully as {bot.user}")
+    except Exception as e:
+        print(f"[Bot Error] on_ready failed: {e}", file=sys.stderr)
 
 # ==================================================
-# KEEP ALIVE LOOP (Render用定期通信)
+# KEEP ALIVE LOOP
 # ==================================================
 
 @tasks.loop(minutes=5)
@@ -176,7 +199,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         await interaction.response.send_message("❌ エラーが発生しました", ephemeral=True)
 
 # ==================================================
-# LOG CHANNEL COMMANDS
+# COMMANDS
 # ==================================================
 
 @bot.tree.command(name="ログ設定")
@@ -190,10 +213,6 @@ async def set_log_channel(interaction: discord.Interaction, channel: discord.Tex
     save_data(data)
     await interaction.response.send_message(f"✅ ログ送信先を {channel.mention} に設定しました", ephemeral=True)
 
-# ==================================================
-# GENERAL USER COMMANDS (全員が使える確認コマンド)
-# ==================================================
-
 @bot.tree.command(name="認証確認")
 async def check_my_roles(interaction: discord.Interaction):
     data = load_data()
@@ -202,7 +221,6 @@ async def check_my_roles(interaction: discord.Interaction):
 
     codes = data[gid].get("codes", {})
     user_roles = interaction.user.roles
-
     verified_roles = []
 
     for code, role_id in codes.items():
@@ -217,10 +235,6 @@ async def check_my_roles(interaction: discord.Interaction):
 
     await interaction.response.send_message(text, ephemeral=True)
 
-# ==================================================
-# SCORE COMMANDS
-# ==================================================
-
 @bot.tree.command(name="ポイント追加")
 @app_commands.check(is_admin)
 async def add_point(interaction: discord.Interaction, member: discord.Member, point: int):
@@ -233,7 +247,7 @@ async def add_point(interaction: discord.Interaction, member: discord.Member, po
     scores[uid] = scores.get(uid, 0) + point
     save_data(data)
 
-    await interaction.response.send_message(f"{member.mention} に +{point}pt 付与しました", ephemeral=True)
+    await interaction.response.send_message(f"{member.mention} に +{point}pt 付付しました", ephemeral=True)
 
 @bot.tree.command(name="ポイント確認")
 async def my_point(interaction: discord.Interaction):
@@ -252,8 +266,8 @@ async def scoreboard(interaction: discord.Interaction):
 
     scores = data[gid]["scores"]
     
-    # 【完全修正】x[1] (ポイント数) を明確に対象にして降順ソート
-    ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    # 安全に辞書のアイテムを展開して並び替え
+    ranking = sorted(scores.items(), key=lambda item: item[1], reverse=True)
 
     text = ""
     rank = 1
@@ -303,6 +317,7 @@ async def reset_all(interaction: discord.Interaction):
 @app_commands.check(is_admin)
 async def panel(interaction: discord.Interaction):
     embed = discord.Embed(title="認証パネル", description="下のボタンを押してコードを入力してください", color=discord.Color.green())
+    embed = discord.Embed(title="認証パネル", description="下のボタンを押してコードを入力してください", color=discord.Color.green())
     await interaction.channel.send(embed=embed, view=VerifyView())
     await interaction.response.send_message("パネルを送信しました", ephemeral=True)
 
@@ -315,3 +330,14 @@ async def set_code(interaction: discord.Interaction, code: str, role: discord.Ro
 
     data[gid]["codes"][code] = str(role.id)
     save_data(data)
+    await interaction.response.send_message(f"✅ コード `{code}` にロール {role.mention} を紐付けました", ephemeral=True)
+
+# ==================================================
+# MAIN RUN
+# ==================================================
+
+if __name__ == "__main__":
+    print("[System] Bypassing python3.14 audioop issue...")
+    keep_alive()
+    print("[System] Running discord bot...")
+    bot.run(TOKEN)
