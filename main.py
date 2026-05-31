@@ -10,7 +10,7 @@ import json
 import os
 
 # ==================================================
-# Flask KeepAlive
+# Flask KeepAlive (Render 200番応答用)
 # ==================================================
 
 app = Flask(__name__)
@@ -20,6 +20,7 @@ def home():
     return "Bot is Alive"
 
 def run_web():
+    # Renderの指定ポート（デフォルトは10000）を自動取得
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, use_reloader=False)
 
@@ -113,41 +114,47 @@ class VerifyModal(discord.ui.Modal, title="認証コード入力"):
             await interaction.response.send_message("✅ 認証完了", ephemeral=True)
             await send_log(interaction.guild, f"認証: {interaction.user} → {role.name}")
         except discord.Forbidden:
-            await interaction.response.send_message("権限なし: Botのロール順位を上げてください", ephemeral=True)
+            await interaction.response.send_message("権限なし: Botのロール順位を上げて再試行してください", ephemeral=True)
 
 # ==================================================
-# VIEW (再起動対策版)
+# VIEW (再起動・永続化対応)
 # ==================================================
 
 class VerifyView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
+    # custom_idを固定してBot再起動後もボタンが反応するように修正
     @discord.ui.button(label="認証", style=discord.ButtonStyle.green, custom_id="persistent_verify_btn")
     async def btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(VerifyModal())
 
 # ==================================================
-# BOT SETUP (修正部分)
+# BOT SETUP & INTENTS
 # ==================================================
 
+# 必要な権限（特権インテントを含む）をすべて有効化
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
-intents.message_content = True  # メッセージ内容の取得権限を有効化
+intents.message_content = True 
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
+    # 起動時に永続Viewをリスナーに登録
     bot.add_view(VerifyView())
+    # スラッシュコマンドをDiscord側と同期
     await bot.tree.sync()
+    
     if not render_ping.is_running():
         render_ping.start()
+        
     print(f"Logged in as {bot.user}")
 
 # ==================================================
-# KEEP ALIVE LOOP
+# KEEP ALIVE LOOP (Render用定期通信)
 # ==================================================
 
 @tasks.loop(minutes=5)
@@ -209,6 +216,8 @@ async def scoreboard(interaction: discord.Interaction):
     ensure_guild(data, gid)
 
     scores = data[gid]["scores"]
+    
+    # 【修正箇所】タプルの2番目の要素（ポイント数）を対象に降順ソート
     ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
     text = ""
@@ -274,9 +283,11 @@ async def set_code(interaction: discord.Interaction, code: str, role: discord.Ro
     await interaction.response.send_message(f"✅ コード `{code}` にロール {role.mention} を紐付けました", ephemeral=True)
 
 # ==================================================
-# MAIN
+# MAIN RUN
 # ==================================================
 
 if __name__ == "__main__":
+    # Webサーバーを別スレッドで確実に先行起動
     keep_alive()
+    # Discord Botの起動
     bot.run(TOKEN)
