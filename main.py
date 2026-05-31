@@ -121,36 +121,29 @@ class VerifyModal(discord.ui.Modal, title="認証コード入力"):
 
 class VerifyView(discord.ui.View):
     def __init__(self):
-        # timeout=None にすることで永続化
         super().__init__(timeout=None)
 
-    # custom_id を固定することで再起動後も識別可能にする
     @discord.ui.button(label="認証", style=discord.ButtonStyle.green, custom_id="persistent_verify_btn")
     async def btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(VerifyModal())
 
 # ==================================================
-# BOT SETUP
+# BOT SETUP (修正部分)
 # ==================================================
 
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
+intents.message_content = True  # メッセージ内容の取得権限を有効化
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
-    # 起動時にViewを再登録する
     bot.add_view(VerifyView())
-    
-    # コマンド同期
     await bot.tree.sync()
-    
-    # ループ処理開始
     if not render_ping.is_running():
         render_ping.start()
-        
     print(f"Logged in as {bot.user}")
 
 # ==================================================
@@ -251,7 +244,7 @@ async def add_all(interaction: discord.Interaction, point: int):
     save_data(data)
     await interaction.response.send_message(f"全員に {point}pt 追加しました", ephemeral=True)
 
-@bot.tree.command(name="全員リreset")
+@bot.tree.command(name="全員リセット")
 @app_commands.check(is_admin)
 async def reset_all(interaction: discord.Interaction):
     data = load_data()
