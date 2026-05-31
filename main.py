@@ -1,22 +1,32 @@
+# ==================================================
+# 【最重要】Python 3.13 / 3.14 音声バグ強制回避対策（最上部に配置）
+# ==================================================
+import sys
+import types
+
+try:
+    import audioop
+except ModuleNotFoundError:
+    # discord.pyが読み込まれる前にダミーのaudioopをシステムに登録する
+    dummy_audioop = types.ModuleType("audioop")
+    sys.modules["audioop"] = dummy_audioop
+
+# ==================================================
+# 必要なライブラリのインポート
+# ==================================================
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 
 from flask import Flask
 from threading import Thread
-
 import aiohttp
 import json
 import os
-import sys
 
-try:
-    import audioop
-except ModuleNotFoundError:
-    import types
-    dummy_audioop = types.ModuleType("audioop")
-    sys.modules["audioop"] = dummy_audioop
-
+# ==================================================
+# Flask KeepAlive
+# ==================================================
 app = Flask(__name__)
 
 @app.route("/")
@@ -33,6 +43,9 @@ def run_web():
 def keep_alive():
     Thread(target=run_web, daemon=True).start()
 
+# ==================================================
+# CONFIG & DATA MANAGEMENT
+# ==================================================
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
     print("DISCORD_TOKEN is missing!", file=sys.stderr)
@@ -81,6 +94,9 @@ async def send_log(guild, text):
         except:
             pass
 
+# ==================================================
+# VERIFY MODAL & VIEW
+# ==================================================
 class VerifyModal(discord.ui.Modal, title="認証コード入力"):
     code = discord.ui.TextInput(label="コード", required=True)
 
@@ -118,6 +134,9 @@ class VerifyView(discord.ui.View):
     async def btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(VerifyModal())
 
+# ==================================================
+# BOT SETUP
+# ==================================================
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
@@ -157,6 +176,9 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     else:
         await interaction.response.send_message("エラーが発生しました", ephemeral=True)
 
+# ==================================================
+# COMMANDS
+# ==================================================
 @bot.tree.command(name="ログ設定")
 @app_commands.check(is_admin)
 async def set_log_channel(interaction: discord.Interaction, channel: discord.TextChannel):
@@ -247,7 +269,7 @@ async def add_all(interaction: discord.Interaction, point: int):
     save_data(data)
     await interaction.response.send_message(f"全員に {point}pt 追加しました", ephemeral=True)
 
-@bot.tree.command(name="全員リセット")
+@bot.tree.command(name="全員リreset")
 @app_commands.check(is_admin)
 async def reset_all(interaction: discord.Interaction):
     data = load_data()
