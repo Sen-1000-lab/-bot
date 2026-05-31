@@ -20,7 +20,6 @@ def home():
     return "Bot is Alive"
 
 def run_web():
-    # Renderの指定ポート（デフォルトは10000）を自動取得
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, use_reloader=False)
 
@@ -124,7 +123,6 @@ class VerifyView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    # custom_idを固定してBot再起動後もボタンが反応するように修正
     @discord.ui.button(label="認証", style=discord.ButtonStyle.green, custom_id="persistent_verify_btn")
     async def btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(VerifyModal())
@@ -133,7 +131,6 @@ class VerifyView(discord.ui.View):
 # BOT SETUP & INTENTS
 # ==================================================
 
-# 必要な権限（特権インテントを含む）をすべて有効化
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
@@ -143,14 +140,10 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
-    # 起動時に永続Viewをリスナーに登録
     bot.add_view(VerifyView())
-    # スラッシュコマンドをDiscord側と同期
     await bot.tree.sync()
-    
     if not render_ping.is_running():
         render_ping.start()
-        
     print(f"Logged in as {bot.user}")
 
 # ==================================================
@@ -183,7 +176,50 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         await interaction.response.send_message("❌ エラーが発生しました", ephemeral=True)
 
 # ==================================================
-# COMMANDS
+# LOG CHANNEL COMMANDS
+# ==================================================
+
+@bot.tree.command(name="ログ設定")
+@app_commands.check(is_admin)
+async def set_log_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+    data = load_data()
+    gid = str(interaction.guild.id)
+    ensure_guild(data, gid)
+
+    data[gid]["log_channel"] = str(channel.id)
+    save_data(data)
+    await interaction.response.send_message(f"✅ ログ送信先を {channel.mention} に設定しました", ephemeral=True)
+
+# ==================================================
+# GENERAL USER COMMANDS (全員が使える確認コマンド)
+# ==================================================
+
+@bot.tree.command(name="認証確認")
+async def check_my_roles(interaction: discord.Interaction):
+    data = load_data()
+    gid = str(interaction.guild.id)
+    ensure_guild(data, gid)
+
+    codes = data[gid].get("codes", {})
+    user_roles = interaction.user.roles
+
+    verified_roles = []
+
+    # サーバーに設定されているコードと、ユーザーの所持ロールを比較
+    for code, role_id in codes.items():
+        role = interaction.guild.get_role(int(role_id))
+        if role and role in user_roles:
+            verified_roles.append(f"• `{code}` → {role.mention}")
+
+    if verified_roles:
+        text = "あなたが既に認証を完了しているロール一覧です：\n\n" + "\n".join(verified_roles)
+    else:
+        text = "❌ 認証済みのロールは見つかりませんでした。"
+
+    await interaction.response.send_message(text, ephemeral=True)
+
+# ==================================================
+# SCORE COMMANDS
 # ==================================================
 
 @bot.tree.command(name="ポイント追加")
@@ -216,8 +252,6 @@ async def scoreboard(interaction: discord.Interaction):
     ensure_guild(data, gid)
 
     scores = data[gid]["scores"]
-    
-    # 【修正箇所】タプルの2番目の要素（ポイント数）を対象に降順ソート
     ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
     text = ""
@@ -280,14 +314,3 @@ async def set_code(interaction: discord.Interaction, code: str, role: discord.Ro
 
     data[gid]["codes"][code] = str(role.id)
     save_data(data)
-    await interaction.response.send_message(f"✅ コード `{code}` にロール {role.mention} を紐付けました", ephemeral=True)
-
-# ==================================================
-# MAIN RUN
-# ==================================================
-
-if __name__ == "__main__":
-    # Webサーバーを別スレッドで確実に先行起動
-    keep_alive()
-    # Discord Botの起動
-    bot.run(TOKEN)
