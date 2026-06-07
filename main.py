@@ -94,6 +94,102 @@ async def send_log(guild, text):
         except:
             pass
 
+    async def on_submit(self, interaction: discord.Interaction):
+        data = load_data()
+        gid = str(interaction.guild.id)
+        ensure_guild(data, gid)
+        codes = data[gid]["codes"]
+
+        if self.code.value not in codes:
+            await interaction.response.send_message("コード違い", ephemeral=True)
+            return
+
+        # コードに対応するロールを取得（権限を変更する対象のロールとして使用）
+        role = interaction.guild.get_role(int(codes[self.code.value]))
+        if not role:
+            await interaction.response.send_message("ロールなし", ephemeral=True)
+            return
+
+        try:
+            # 【変更】ロール付与（add_roles）は行わず、カテゴリー権限の変更のみ実行
+            category_perms = data[gid].get("category_perms", {})
+            perm_log_text = ""
+            
+            for cat_id_str, view_permission in category_perms.items():
+                category = interaction.guild.get_channel(int(cat_id_str))
+                if isinstance(category, discord.CategoryChannel):
+                    # view_permissionがTrueなら表示(許可)、Falseなら非表示(禁止)
+                    overwrite = discord.PermissionOverwrite(
+                        read_messages=view_permission, 
+                        send_messages=view_permission
+                    )
+                    # 対象のロールに対してカテゴリーの権限を上書き
+                    await category.set_permissions(role, overwrite=overwrite)
+                    action_name = "表示・送信許可" if view_permission else "非表示"
+                    perm_log_text += f"\n- カテゴリー「{category.name}」を【{action_name}】に設定"
+
+            await interaction.response.send_message("認証完了（カテゴリー権限を更新しました）", ephemeral=True)
+            await send_log(interaction.guild, f"認証コード適用: {interaction.user} がコードを使用して「{role.name}」向けのカテゴリー権限を更新しました。{perm_log_text}")
+        except discord.Forbidden:
+            await interaction.response.send_message("権限なし: Botのロール順位を上げて再試行してください", ephemeral=True)
+
+# ==================================================
+# カテゴリーごとの権限設定用コマンド群（新規追加）
+# ==================================================
+@bot.tree.command(name="カテゴリー権限設定", description="認証成功時に自動変更するカテゴリーの権限を設定します")
+@app_commands.check(is_admin)
+@app_commands.describe(category="設定したいカテゴリーチャンネル", view_permission="認証した人にこのカテゴリーを見せる(True)か、隠す(False)か")
+async def set_category_permission(interaction: discord.Interaction, category: discord.CategoryChannel, view_permission: bool):
+    data = load_data()
+    gid = str(interaction.guild.id)
+    ensure_guild(data, gid)
+
+    data[gid]["category_perms"][str(category.id)] = view_permission
+    save_data(data)
+
+    action_text = "表示（許可）" if view_permission else "非表示（禁止）"
+    await interaction.response.send_message(
+        f"カテゴリー「{category.name}」を、認証成功時に【{action_text}】にするよう設定しました。", 
+        ephemeral=True
+    )
+
+@bot.tree.command(name="カテゴリー権限一覧", description="現在登録されているカテゴリー自動権限設定の一覧を表示します")
+@app_commands.check(is_admin)
+async def list_category_permissions(interaction: discord.Interaction):
+    data = load_data()
+    gid = str(interaction.guild.id)
+    ensure_guild(data, gid)
+    
+    cat_perms = data[gid].get("category_perms", {})
+    if not cat_perms:
+        await interaction.response.send_message("設定されているカテゴリー権限はありません。", ephemeral=True)
+        return
+        
+    text = "【認証時のカテゴリー権限設定一覧】\n"
+    for cat_id_str, view_perm in cat_perms.items():
+        category = interaction.guild.get_channel(int(cat_id_str))
+        cat_name = category.name if category else f"削除されたカテゴリー(ID:{cat_id_str})"
+        status = "🟢 表示許可" if view_perm else "🔴 非表示"
+        text += f"・{cat_name}: {status}\n"
+        
+    await interaction.response.send_message(text, ephemeral=True)
+
+@bot.tree.command(name="カテゴリー権限削除", description="カテゴリーの自動権限設定を解除します")
+@app_commands.check(is_admin)
+@app_commands.describe(category="設定を削除したいカテゴリーチャンネル")
+async def delete_category_permission(interaction: discord.Interaction, category: discord.CategoryChannel):
+    data = load_data()
+    gid = str(interaction.guild.id)
+    ensure_guild(data, gid)
+    
+    cat_perms = data[gid].get("category_perms", {})
+    if str(category.id) in cat_perms:
+        del data[gid]["category_perms"][str(category.id)]
+        save_data(data)
+        await interaction.response.send_message(f"カテゴリー「{category.name}」の設定を削除しました。", ephemeral=True)
+    else:
+        await interaction.response.send_message("このカテゴリーには設定が登録されていません。", ephemeral=True)
+
 # ==================================================
 # VERIFY MODAL & VIEW
 # ==================================================
