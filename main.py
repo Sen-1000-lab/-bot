@@ -668,9 +668,3 @@ if __name__ == "__main__":
     print(
         "BOT START"
     )
-
-    keep_alive()
-
-    bot.run(
-        TOKEN
-    )
