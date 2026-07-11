@@ -2,6 +2,16 @@ import sys
 import types
 import os
 import json
+
+
+# Python 3.13 / 3.14 audioop対策
+try:
+    import audioop
+except ModuleNotFoundError:
+    audioop = types.ModuleType("audioop")
+    sys.modules["audioop"] = audioop
+
+
 import aiohttp
 import discord
 
