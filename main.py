@@ -665,6 +665,14 @@ async def command_error(
 # =====================================
 if __name__ == "__main__":
 
+if __name__ == "__main__":
+
     print(
         "BOT START"
+    )
+
+    keep_alive()
+
+    bot.run(
+        TOKEN
     )
